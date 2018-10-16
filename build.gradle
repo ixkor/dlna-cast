@@ -1,0 +1,40 @@
+plugins {
+    id 'java'
+    id 'org.jetbrains.kotlin.jvm' version '1.3.0-rc-80'
+    id 'application'
+}
+
+group 'net.xkor.media'
+version '1.0'
+
+sourceCompatibility = 1.8
+
+mainClassName = "net.xkor.media.dlnacast.MainKt"
+
+ext.ktor_version = '0.9.5-rc13'
+
+repositories {
+    jcenter()
+    mavenCentral()
+    maven { url 'http://dl.bintray.com/kotlin/kotlin-eap' }
+    maven { url "https://dl.bintray.com/kotlin/kotlinx" }
+    maven { url "https://dl.bintray.com/kotlin/ktor" }
+    maven { url 'http://4thline.org/m2/' }
+}
+
+dependencies {
+    compile "org.jetbrains.kotlin:kotlin-stdlib-jdk7"
+    compile "org.fourthline.cling:cling-core:2.1.2"
+    compile "org.fourthline.cling:cling-support:2.1.2"
+
+    compile "io.ktor:ktor-server-netty:$ktor_version"
+    compile "io.ktor:ktor-server-host-common:$ktor_version"
+    compile "io.ktor:ktor-client-okhttp:$ktor_version"
+    compile "io.ktor:ktor-html-builder:$ktor_version"
+
+    compile "ch.qos.logback:logback-classic:1.2.3"
+}
+
+compileKotlin {
+    kotlinOptions.jvmTarget = "1.6"
+}
