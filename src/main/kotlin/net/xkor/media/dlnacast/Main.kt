@@ -1,46 +1,61 @@
 package net.xkor.media.dlnacast
 
+import com.typesafe.config.ConfigFactory
 import io.ktor.client.HttpClient
+import io.ktor.client.call.call
+import io.ktor.config.tryGetString
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import java.io.File
+import java.net.ConnectException
+import java.util.concurrent.TimeUnit
 
-fun main(args: Array<String>) {
-    if (args.isEmpty()) {
-        println(
-            "Available commands: " +
-                    "\tserver: Run application as server" +
-                    "\tstart: Run server in as new process and return" +
-                    "\tstop: Stop server"
-        )
+object Main {
+
+    @JvmStatic
+    fun main(args: Array<String>) {
+        when (args.getOrNull(0)) {
+            "start" -> startServer()
+            "stop" -> stopServer()
+            else -> Server.execute(args)
+        }
     }
 
-    when (args[0]) {
-        "server", null -> {
-            val addr = args.getOrNull(1)?.split(':').orEmpty()
-            when (addr.size) {
-                1 -> Server.execute(addr[0])
-                2 -> if (addr[0].isNotEmpty()) {
-                    Server.execute(addr[0], addr[1].toInt())
-                } else {
-                    Server.execute(port = addr[1].toInt())
-                }
-                else -> Server.execute()
+    private fun startServer() {
+        exec(Main::class.java)
+    }
+
+    private fun stopServer() {
+        val config = ConfigFactory.parseFile(File("application.conf"))
+        val host = (config.tryGetString("ktor.deployment.host") ?: "0.0.0.0")
+            .replace("0.0.0.0", "127.0.0.1")
+        val port = config.tryGetString("ktor.deployment.port") ?: "8686"
+
+        val client = HttpClient()
+        runBlocking {
+            try {
+                client.call("http://$host:$port/stop").response
+                delay(2, TimeUnit.SECONDS)
+                println("Stopped")
+            } catch (e: ConnectException) {
+                println("Already stopped")
             }
         }
-        "start" -> startServer(args)
-        "stop" -> stopServer()
     }
-}
 
-fun startServer(args: Array<String>) {
+    private fun exec(klass: Class<*>): Process {
+        val javaHome = System.getProperty("java.home")
+        val javaBin = javaHome +
+                File.separator + "bin" +
+                File.separator + "java"
+        val classpath = System.getProperty("java.class.path")
+        val className = klass.canonicalName
 
-}
+        val builder = ProcessBuilder(
+            javaBin, "-cp", classpath, className
+        )
 
-fun stopServer() {
-    val client = HttpClient()
-    runBlocking {
-
-        //        if(client.call("http://127.0.0.1:/stop").response.status){
-//
-//        }
+        return builder.start()
     }
+
 }

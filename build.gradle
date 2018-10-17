@@ -10,6 +10,15 @@ version '1.0'
 sourceCompatibility = 1.8
 
 mainClassName = "net.xkor.media.dlnacast.MainKt"
+distributions {
+    main {
+        contents {
+            from("application.conf") {
+                into "bin"
+            }
+        }
+    }
+}
 
 ext.ktor_version = '0.9.5-rc13'
 

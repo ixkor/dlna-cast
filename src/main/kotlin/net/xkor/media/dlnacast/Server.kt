@@ -9,9 +9,7 @@ import io.ktor.response.respondRedirect
 import io.ktor.routing.get
 import io.ktor.routing.routing
 import io.ktor.server.engine.ShutDownUrl
-import io.ktor.server.engine.embeddedServer
-import io.ktor.server.netty.Netty
-import io.ktor.server.netty.NettyApplicationEngine
+import io.ktor.server.netty.DevelopmentEngine
 import io.ktor.util.pipeline.PipelineContext
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
@@ -39,9 +37,6 @@ object Server {
             }
         })
     }
-    private var host: String = "0.0.0.0"
-    private var port: Int = 8686
-    private val server: NettyApplicationEngine by lazy { initHttpServer() }
     private val properties = Properties()
     private val playList = mutableListOf(
         PlayItem("http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"),
@@ -59,44 +54,45 @@ object Server {
         PlayItem("http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WhatCarCanYouGetForAGrand.mp4")
     )
 
-    fun execute(host: String = this.host, port: Int = this.port) {
-        this.host = host
-        this.port = port
+    fun execute(args: Array<String>) {
         loadConfig()
-        server.start(wait = true)
+        val argsWithDefs = args + arrayOf(
+            "-config=application.conf"
+        )
+        DevelopmentEngine.main(argsWithDefs)
+//        val applicationEnvironment = commandLineEnvironment(argsWithDefs)
+//        embeddedServer(Netty, applicationEnvironment).start(true)
     }
 
-    private fun initHttpServer(): NettyApplicationEngine {
-        return embeddedServer(Netty, port, host) {
-            routing {
-                get("/") { call.respondRedirect("/status") }
-                get("/status") { handleStatus() }
-                get("/scan") {
-                    scanDevices()
-                    delay(2, TimeUnit.SECONDS)
-                    call.respondRedirect("/status")
-                }
-                get("/play") { handlePlay() }
-                get("/start-tracking") { handleStartTracking() }
-                get("/stop-tracking") { handleStopTracking() }
-                get("/play-list") { handlePlayList() }
-                get("/play-list-edit") { handlePlayListEdit() }
-                static("static") {
-                    filesWithCustomContentType("static") {
-                        when (it.extension.toLowerCase()) {
-                            "mp4" -> ContentType.Video.MP4
-                            else -> null
-                        }
+    fun module(application: Application) = application.apply {
+        routing {
+            get("/") { call.respondRedirect("/status") }
+            get("/status") { handleStatus() }
+            get("/scan") {
+                scanDevices()
+                delay(2, TimeUnit.SECONDS)
+                call.respondRedirect("/status")
+            }
+            get("/play") { handlePlay() }
+            get("/start-tracking") { handleStartTracking() }
+            get("/stop-tracking") { handleStopTracking() }
+            get("/play-list") { handlePlayList() }
+            get("/play-list-edit") { handlePlayListEdit() }
+            static("static") {
+                filesWithCustomContentType("static") {
+                    when (it.extension.toLowerCase()) {
+                        "mp4" -> ContentType.Video.MP4
+                        else -> null
                     }
                 }
             }
-            install(ShutDownUrl.ApplicationCallFeature) {
-                shutDownUrl = "/stop"
-            }
-            install(AutoHeadResponse)
-            environment.monitor.subscribe(ApplicationStopPreparing) { upnpService.shutdown() }
-            environment.monitor.subscribe(ApplicationStarted) { scanDevices() }
         }
+        install(ShutDownUrl.ApplicationCallFeature) {
+            shutDownUrl = "/stop"
+        }
+        install(AutoHeadResponse)
+        environment.monitor.subscribe(ApplicationStopPreparing) { upnpService.shutdown() }
+        environment.monitor.subscribe(ApplicationStarted) { scanDevices() }
     }
 
     private suspend fun PipelineContext<Unit, ApplicationCall>.handlePlayListEdit() {
@@ -339,3 +335,5 @@ object Server {
     data class PlayItem(val url: String, val duration: Long? = null)
 
 }
+
+fun Application.module() = Server.module(this)
