@@ -1,21 +1,11 @@
 package net.xkor.media.dlnacast
 
-import io.ktor.application.call
-import io.ktor.http.ContentType
-import io.ktor.http.content.LocalFileContent
-import io.ktor.http.content.staticRootFolder
-import io.ktor.http.defaultForFile
-import io.ktor.response.respond
-import io.ktor.routing.Route
-import io.ktor.routing.get
-import io.ktor.util.combineSafe
 import org.fourthline.cling.UpnpService
 import org.fourthline.cling.controlpoint.ActionCallback
 import org.fourthline.cling.model.action.ActionInvocation
 import org.fourthline.cling.model.gena.GENASubscription
 import org.fourthline.cling.model.message.UpnpResponse
 import org.fourthline.cling.model.meta.Service
-import java.io.File
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
@@ -56,30 +46,4 @@ suspend fun UpnpService.execute(
         actionInvocation.setInput(it.first, it.second.toString())
     }
     execute(actionInvocation)
-}
-
-private const val pathParameterName = "static-content-path-parameter"
-
-private fun File?.combine(file: File) = when {
-    this == null -> file
-    else -> resolve(file)
-}
-
-fun Route.filesWithCustomContentType(
-    folder: String,
-    contentTypeResolver: (File) -> ContentType? = { null }
-) = filesWithCustomContentType(File(folder), contentTypeResolver)
-
-fun Route.filesWithCustomContentType(
-    folder: File,
-    contentTypeResolver: (File) -> ContentType? = { null }
-) {
-    val dir = staticRootFolder.combine(folder)
-    get("{$pathParameterName...}") {
-        val relativePath = call.parameters.getAll(pathParameterName)?.joinToString(File.separator) ?: return@get
-        val file = dir.combineSafe(relativePath)
-        if (file.isFile) {
-            call.respond(LocalFileContent(file, contentTypeResolver(file) ?: ContentType.defaultForFile(file)))
-        }
-    }
 }

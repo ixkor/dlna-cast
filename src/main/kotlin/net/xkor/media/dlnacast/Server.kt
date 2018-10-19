@@ -1,15 +1,20 @@
 package net.xkor.media.dlnacast
 
+import com.typesafe.config.ConfigFactory
 import io.ktor.application.*
+import io.ktor.config.tryGetString
 import io.ktor.features.AutoHeadResponse
 import io.ktor.html.respondHtml
 import io.ktor.http.ContentType
-import io.ktor.http.content.static
+import io.ktor.http.content.LocalFileContent
+import io.ktor.http.defaultForFile
+import io.ktor.response.respond
 import io.ktor.response.respondRedirect
 import io.ktor.routing.get
 import io.ktor.routing.routing
 import io.ktor.server.engine.ShutDownUrl
 import io.ktor.server.netty.DevelopmentEngine
+import io.ktor.util.combineSafe
 import io.ktor.util.pipeline.PipelineContext
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
@@ -26,6 +31,8 @@ import java.util.*
 import java.util.concurrent.TimeUnit
 
 object Server {
+
+    private const val pathParameterName = "static-content-path-parameter"
 
     private val tvs = mutableMapOf<String, DeviceControl>()
     private val upnpService by lazy {
@@ -53,6 +60,9 @@ object Server {
         PlayItem("http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4"),
         PlayItem("http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WhatCarCanYouGetForAGrand.mp4")
     )
+    private lateinit var host: String
+    private lateinit var port: String
+    private var localPath: String = "static"
 
     fun execute(args: Array<String>) {
         loadConfig()
@@ -60,8 +70,6 @@ object Server {
             "-config=application.conf"
         )
         DevelopmentEngine.main(argsWithDefs)
-//        val applicationEnvironment = commandLineEnvironment(argsWithDefs)
-//        embeddedServer(Netty, applicationEnvironment).start(true)
     }
 
     fun module(application: Application) = application.apply {
@@ -78,14 +86,8 @@ object Server {
             get("/stop-tracking") { handleStopTracking() }
             get("/play-list") { handlePlayList() }
             get("/play-list-edit") { handlePlayListEdit() }
-            static("static") {
-                filesWithCustomContentType("static") {
-                    when (it.extension.toLowerCase()) {
-                        "mp4" -> ContentType.Video.MP4
-                        else -> null
-                    }
-                }
-            }
+            get("/play-list-configure") { handlePlayListConfigure() }
+            get("/static/{$pathParameterName...}") { handleStatic() }
         }
         install(ShutDownUrl.ApplicationCallFeature) {
             shutDownUrl = "/stop"
@@ -93,6 +95,19 @@ object Server {
         install(AutoHeadResponse)
         environment.monitor.subscribe(ApplicationStopPreparing) { upnpService.shutdown() }
         environment.monitor.subscribe(ApplicationStarted) { scanDevices() }
+    }
+
+    private suspend fun PipelineContext<Unit, ApplicationCall>.handleStatic() {
+        val relativePath = call.parameters.getAll(pathParameterName)?.joinToString(File.separator) ?: return
+        val dir = File(localPath)
+        val file = dir.combineSafe(relativePath)
+        if (file.isFile) {
+            val contentType = when (file.extension.toLowerCase()) {
+                "mp4" -> ContentType.Video.MP4
+                else -> io.ktor.http.ContentType.defaultForFile(file)
+            }
+            call.respond(LocalFileContent(file, contentType))
+        }
     }
 
     private suspend fun PipelineContext<Unit, ApplicationCall>.handlePlayListEdit() {
@@ -124,12 +139,51 @@ object Server {
         call.respondRedirect("/play-list")
     }
 
+    private suspend fun PipelineContext<Unit, ApplicationCall>.handlePlayListConfigure() {
+        host = call.parameters["host"] ?: throw IllegalArgumentException("host can not be null")
+        val newPath = call.parameters["path"] ?: throw IllegalArgumentException("path can not be null")
+        if (!File(newPath).isDirectory) {
+            throw IllegalArgumentException("path '$newPath' is not a directory")
+        }
+        localPath = newPath
+
+        call.respondRedirect("/play-list")
+    }
+
     private suspend fun PipelineContext<Unit, ApplicationCall>.handlePlayList() = call.respondHtml {
         saveConfig()
         head { title("Play List") }
         body {
+            form("/play-list-configure") {
+                a("/status") { +"Status" }
+                +" | "
+                +"Server host name: "
+                input(InputType.text, name = "host") {
+                    value = host
+                    size = "20"
+                }
+                +"  Path to local files: "
+                input(InputType.text, name = "path") {
+                    value = localPath
+                    size = "50"
+                }
+                +"  "
+                button(type = ButtonType.submit) { +"Update" }
+                +"  "
+                button(type = ButtonType.reset) { +"Reset" }
+            }
             ol { playList.forEachIndexed { i, playItem -> li { fillPlayListItem(i, playItem) } } }
             fillPlayListItem(-1, null)
+            val dir = File(localPath)
+            if (dir.isDirectory) {
+                val notAdded = dir.walk().filter { file ->
+                    !playList.any { it.url == file.relativeTo(dir).toString() } && !file.isHidden && file.isFile
+                }.map { PlayItem(it.relativeTo(dir).toString()) }.toList()
+                if (notAdded.isNotEmpty()) {
+                    +"Founded in local path:"
+                    notAdded.forEach { fillPlayListItem(-1, it) }
+                }
+            }
         }
     }
 
@@ -140,7 +194,7 @@ object Server {
         input(InputType.hidden, name = "index") { value = index.toString() }
         label {
             +"Url: "
-            input(InputType.url, name = "url") {
+            input(InputType.text, name = "url") {
                 value = playItem?.url.orEmpty()
                 size = "100"
             }
@@ -153,7 +207,7 @@ object Server {
             }
             +" seconds  "
         }
-        if (playItem != null) {
+        if (playItem != null && index != -1) {
             button(name = "action") { value = "update"; +"Update" }
             +"  "
             button(type = ButtonType.reset) { +"Reset" }
@@ -172,7 +226,7 @@ object Server {
         saveConfig()
         head { title("Status") }
         body {
-            a("/status") { +"Update" }
+            a("/status") { +"Refresh" }
             +" | "
             a("/scan") { +"Rescan" }
             +" | "
@@ -183,34 +237,23 @@ object Server {
         }
     }
 
-    private fun UL.fillDeviceItem(data: DeviceControl) = li {
-        +"${data.name ?: data.device?.details?.friendlyName ?: "?"} "
-        +"(${data.device?.details?.modelDetails?.modelName ?: "?"}, ${data.udn}) "
-        if (data.device != null) {
-            +" State: ${data.state?.name ?: "unknown".takeIf { data.tracked } ?: "not tracked"}"
-            if (data.state == TransportState.PLAYING) {
-                +", duration: ${data.currentDuration}"
+    private fun UL.fillDeviceItem(control: DeviceControl) = li {
+        +"${control.name ?: control.device?.details?.friendlyName ?: "?"} "
+        +"(${control.device?.details?.modelDetails?.modelName ?: "?"}, ${control.udn}) "
+        if (control.device != null) {
+            +" State: ${control.state?.name ?: "unknown".takeIf { control.tracked } ?: "auto play disabled"}"
+            if (control.state == TransportState.PLAYING) {
+                +", ${control.currentUri} (${control.currentDuration})"
             }
         } else {
             +" State: offline"
         }
         br
         +"Actions: "
-        if (data.tracked) {
-            a("/stop-tracking?udn=" + data.udn) { +"Stop tracking" }
-//            data.availableActions?.forEach { action ->
-//                +" | "
-//                when (action) {
-//                    TransportAction.Play -> a("/play?udn=" + data.udn) { +"Play" }
-//                    else -> +action.name
-//                }
-//            }
-//            if (data.availableActions.isNullOrEmpty() && data.state == TransportState.NO_MEDIA_PRESENT) {
-//                +" | "
-//                a("/play?udn=" + data.udn) { +"Play" }
-//            }
+        if (control.tracked) {
+            a("/stop-tracking?udn=" + control.udn) { +"Turn off auto play" }
         } else {
-            a("/start-tracking?udn=" + data.udn) { +"Start tracking" }
+            a("/start-tracking?udn=" + control.udn) { +"Turn on auto play" }
         }
     }
 
@@ -240,8 +283,8 @@ object Server {
             TransportState.STOPPED -> if (deviceControl.autoPlay && !deviceControl.playPreparing) {
                 GlobalScope.launch {
                     val currentUrl = deviceControl.currentUri?.toString()
-                    val index = (playList.indexOfFirst { it.url == currentUrl } + 1).rem(playList.size)
-                    val nextUrl = playList[index].url
+                    val index = (playList.indexOfFirst { it.absoluteUrl == currentUrl } + 1).rem(playList.size)
+                    val nextUrl = playList[index].absoluteUrl
                     deviceControl.playPreparing = true
                     try {
                         upnpService.execute(
@@ -263,7 +306,7 @@ object Server {
                 val duration = deviceControl.currentDuration?.replace(":", "")?.toFloat()
                 if (duration == 0f) {
                     val currentUrl = deviceControl.currentUri?.toString()
-                    playList.find { it.url == currentUrl && it.duration != null }?.also {
+                    playList.find { it.absoluteUrl == currentUrl && it.duration != null }?.also {
                         GlobalScope.launch {
                             delay(it.duration!!, TimeUnit.SECONDS)
                             upnpService.execute(deviceControl.service, "Stop", "InstanceID" to 0)
@@ -311,6 +354,8 @@ object Server {
     private fun saveConfig() {
         properties["devices"] = tvs.keys.joinToString(",")
         properties["playList"] = playList.joinToString(";") { it.url + "," + (it.duration ?: "") }
+        properties["host"] = host
+
         File("config.properties").outputStream().use {
             properties.store(it.writer(), null)
         }
@@ -329,8 +374,16 @@ object Server {
                     playList.add(PlayItem(url, duration.toLongOrNull()))
                 }
             }
+
+            val config = ConfigFactory.parseFile(File("application.conf"))
+            host = properties["host"]?.toString() ?: (config.tryGetString("ktor.deployment.host") ?: "0.0.0.0")
+                .replace("0.0.0.0", "127.0.0.1")
+            port = config.tryGetString("ktor.deployment.port") ?: "8686"
         }
     }
+
+    private val httpSchemeMather = "^https?://.*".toRegex()
+    private val PlayItem.absoluteUrl get() = if (httpSchemeMather.matches(url)) url else "http://$host:$port/static/$url"
 
     data class PlayItem(val url: String, val duration: Long? = null)
 
