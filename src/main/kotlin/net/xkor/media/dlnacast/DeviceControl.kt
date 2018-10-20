@@ -36,6 +36,10 @@ class DeviceControl(val udn: String, properties: Properties) {
     private val subscription: GENASubscription<*>? get() = subscriptionCallback?.subscription
     @Volatile
     var playPreparing = false
+    @Volatile
+    var currentPlayItemIndex = -1
+    @Volatile
+    var hasAutoStop = false
 
     var lastChange: LastChange? = null
         private set
@@ -56,6 +60,9 @@ class DeviceControl(val udn: String, properties: Properties) {
         service = null
         subscriptionCallback?.end()
         subscriptionCallback = null
+        currentPlayItemIndex = -1
+        hasAutoStop = false
+        playPreparing = false
         onLastStateChanged()
     }
 

@@ -242,8 +242,8 @@ object Server {
         +"(${control.device?.details?.modelDetails?.modelName ?: "?"}, ${control.udn}) "
         if (control.device != null) {
             +" State: ${control.state?.name ?: "unknown".takeIf { control.tracked } ?: "auto play disabled"}"
-            if (control.state == TransportState.PLAYING) {
-                +", ${control.currentUri} (${control.currentDuration})"
+            if (control.state == TransportState.PLAYING && control.currentPlayItemIndex in 0 until playList.size) {
+                +", ${playList[control.currentPlayItemIndex].url} (${control.currentDuration})"
             }
         } else {
             +" State: offline"
@@ -281,9 +281,10 @@ object Server {
             TransportState.NO_MEDIA_PRESENT,
             TransportState.PAUSED_PLAYBACK,
             TransportState.STOPPED -> if (deviceControl.autoPlay && !deviceControl.playPreparing) {
+                deviceControl.hasAutoStop = false
                 GlobalScope.launch {
-                    val currentUrl = deviceControl.currentUri?.toString()
-                    val index = (playList.indexOfFirst { it.absoluteUrl == currentUrl } + 1).rem(playList.size)
+                    deviceControl.currentPlayItemIndex = (deviceControl.currentPlayItemIndex + 1).rem(playList.size)
+                    val index = deviceControl.currentPlayItemIndex
                     val nextUrl = playList[index].absoluteUrl
                     deviceControl.playPreparing = true
                     try {
@@ -304,12 +305,26 @@ object Server {
             }
             TransportState.PLAYING -> {
                 val duration = deviceControl.currentDuration?.replace(":", "")?.toFloat()
-                if (duration == 0f) {
-                    val currentUrl = deviceControl.currentUri?.toString()
-                    playList.find { it.absoluteUrl == currentUrl && it.duration != null }?.also {
+                if (duration == 0f && !deviceControl.hasAutoStop) {
+//                    val currentUrl = deviceControl.currentUri?.toString()
+//                    playList.find { it.absoluteUrl == currentUrl && it.duration != null }?.also {
+                    if (deviceControl.currentPlayItemIndex == -1) {
                         GlobalScope.launch {
-                            delay(it.duration!!, TimeUnit.SECONDS)
                             upnpService.execute(deviceControl.service, "Stop", "InstanceID" to 0)
+                        }
+                    } else playList.getOrNull(deviceControl.currentPlayItemIndex)?.also {
+                        deviceControl.hasAutoStop = true
+                        GlobalScope.launch {
+                            delay(it.duration ?: 10, TimeUnit.SECONDS)
+                            if (it.duration != null ||
+                                deviceControl.currentDuration?.replace(":", "")?.toFloat() == 0f
+                            ) {
+                                try {
+                                    upnpService.execute(deviceControl.service, "Stop", "InstanceID" to 0)
+                                } finally {
+                                    deviceControl.hasAutoStop = false
+                                }
+                            }
                         }
                     }
                 }
@@ -355,6 +370,7 @@ object Server {
         properties["devices"] = tvs.keys.joinToString(",")
         properties["playList"] = playList.joinToString(";") { it.url + "," + (it.duration ?: "") }
         properties["host"] = host
+        properties["path"] = localPath
 
         File("config.properties").outputStream().use {
             properties.store(it.writer(), null)
@@ -374,6 +390,7 @@ object Server {
                     playList.add(PlayItem(url, duration.toLongOrNull()))
                 }
             }
+            properties["path"]?.toString()?.also { localPath = it }
 
             val config = ConfigFactory.parseFile(File("application.conf"))
             host = properties["host"]?.toString() ?: (config.tryGetString("ktor.deployment.host") ?: "0.0.0.0")
