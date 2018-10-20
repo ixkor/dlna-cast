@@ -15,8 +15,11 @@ class ActionInvocationException(
     val operation: UpnpResponse?,
     defaultMsg: String?
 ) : RuntimeException(
-    (listOfNotNull(defaultMsg, invocation.action?.name?.let { "Action: $it" }) +
-            invocation.input.map { "\t" + it.argument.name + ": " + it.value }).joinToString("\n")
+    (listOfNotNull(
+        "[${invocation.failure.errorCode}] $defaultMsg",
+        invocation.action?.name?.let { "Action: $it" }) +
+            invocation.input.map { "\t" + it.argument.name + ": " + it.value }).joinToString("\n"),
+    invocation.failure
 )
 
 class SubscriptionException(
