@@ -9,7 +9,7 @@ version '1.0'
 
 sourceCompatibility = 1.8
 
-mainClassName = "net.xkor.media.dlnacast.MainKt"
+mainClassName = "net.xkor.media.dlnacast.Main"
 distributions {
     main {
         contents {
