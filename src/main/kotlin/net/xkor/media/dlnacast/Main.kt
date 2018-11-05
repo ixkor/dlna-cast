@@ -35,7 +35,7 @@ object Main {
         runBlocking {
             try {
                 client.call("http://$host:$port/stop").response
-                delay(2, TimeUnit.SECONDS)
+                delay(TimeUnit.SECONDS.toMillis(2))
                 println("Stopped")
             } catch (e: ConnectException) {
                 println("Already stopped")

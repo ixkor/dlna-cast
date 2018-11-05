@@ -13,7 +13,7 @@ import io.ktor.response.respondRedirect
 import io.ktor.routing.get
 import io.ktor.routing.routing
 import io.ktor.server.engine.ShutDownUrl
-import io.ktor.server.netty.DevelopmentEngine
+import io.ktor.server.netty.EngineMain
 import io.ktor.util.combineSafe
 import io.ktor.util.pipeline.PipelineContext
 import kotlinx.coroutines.GlobalScope
@@ -60,8 +60,8 @@ object Server {
         PlayItem("http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4"),
         PlayItem("http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WhatCarCanYouGetForAGrand.mp4")
     )
-    private lateinit var host: String
-    private lateinit var port: String
+    private var host: String = "0.0.0.0"
+    private var port: String = "8686"
     private var localPath: String = "static"
 
     fun execute(args: Array<String>) {
@@ -69,7 +69,7 @@ object Server {
         val argsWithDefs = args + arrayOf(
             "-config=application.conf"
         )
-        DevelopmentEngine.main(argsWithDefs)
+        EngineMain.main(argsWithDefs)
     }
 
     fun module(application: Application) = application.apply {
@@ -78,7 +78,7 @@ object Server {
             get("/status") { handleStatus() }
             get("/scan") {
                 scanDevices()
-                delay(2, TimeUnit.SECONDS)
+                delay(TimeUnit.SECONDS.toMillis(2))
                 call.respondRedirect("/status")
             }
             get("/play") { handlePlay() }
@@ -271,7 +271,7 @@ object Server {
         tvs[udn]?.apply {
             tracked = false
             unsubscribe()
-            delay(1, TimeUnit.SECONDS) // wait to unsubscribe complete
+            delay(TimeUnit.SECONDS.toMillis(1)) // wait to unsubscribe complete
         }
         call.respondRedirect("/status")
     }
@@ -315,7 +315,7 @@ object Server {
                     } else playList.getOrNull(deviceControl.currentPlayItemIndex)?.also {
                         deviceControl.hasAutoStop = true
                         GlobalScope.launch {
-                            delay(it.duration ?: 10, TimeUnit.SECONDS)
+                            delay(TimeUnit.SECONDS.toMillis(it.duration ?: 10))
                             if (it.duration != null ||
                                 deviceControl.currentDuration?.replace(":", "")?.toFloat() == 0f
                             ) {
