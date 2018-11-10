@@ -40,6 +40,7 @@ dependencies {
     compile "io.ktor:ktor-server-host-common:$ktor_version"
     compile "io.ktor:ktor-client-okhttp:$ktor_version"
     compile "io.ktor:ktor-html-builder:$ktor_version"
+    compile "io.ktor:ktor-auth:$ktor_version"
 
     compile "ch.qos.logback:logback-classic:1.2.3"
 }

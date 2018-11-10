@@ -2,6 +2,10 @@ package net.xkor.media.dlnacast
 
 import com.typesafe.config.ConfigFactory
 import io.ktor.application.*
+import io.ktor.auth.Authentication
+import io.ktor.auth.UserIdPrincipal
+import io.ktor.auth.authenticate
+import io.ktor.auth.basic
 import io.ktor.config.tryGetString
 import io.ktor.features.AutoHeadResponse
 import io.ktor.html.respondHtml
@@ -73,25 +77,39 @@ object Server {
     }
 
     fun module(application: Application) = application.apply {
+        install(Authentication) {
+            basic {
+                realm = "DLNA-Cast"
+                val login = application.environment.config.propertyOrNull("ktor.auth.login")?.getString()
+                val password = application.environment.config.propertyOrNull("ktor.auth.password")?.getString()
+                validate { credentials ->
+                    if (credentials.name == login && credentials.password == password) {
+                        UserIdPrincipal(credentials.name)
+                    } else {
+                        null
+                    }
+                }
+            }
+        }
         routing {
             get("/") { call.respondRedirect("/status") }
-            get("/status") { handleStatus() }
-            get("/scan") {
-                scanDevices()
-                delay(TimeUnit.SECONDS.toMillis(2))
-                call.respondRedirect("/status")
+            authenticate {
+                get("/status") { handleStatus() }
+                get("/scan") {
+                    scanDevices()
+                    delay(TimeUnit.SECONDS.toMillis(2))
+                    call.respondRedirect("/status")
+                }
+                get("/play") { handlePlay() }
+                get("/start-tracking") { handleStartTracking() }
+                get("/stop-tracking") { handleStopTracking() }
+                get("/play-list") { handlePlayList() }
+                get("/play-list-edit") { handlePlayListEdit() }
+                get("/play-list-configure") { handlePlayListConfigure() }
             }
-            get("/play") { handlePlay() }
-            get("/start-tracking") { handleStartTracking() }
-            get("/stop-tracking") { handleStopTracking() }
-            get("/play-list") { handlePlayList() }
-            get("/play-list-edit") { handlePlayListEdit() }
-            get("/play-list-configure") { handlePlayListConfigure() }
             get("/static/{$pathParameterName...}") { handleStatic() }
         }
-        install(ShutDownUrl.ApplicationCallFeature) {
-            shutDownUrl = "/stop"
-        }
+        install(ShutDownUrl.ApplicationCallFeature) { shutDownUrl = "/stop" }
         install(AutoHeadResponse)
         environment.monitor.subscribe(ApplicationStopPreparing) { upnpService.shutdown() }
         environment.monitor.subscribe(ApplicationStarted) { scanDevices() }
@@ -176,9 +194,9 @@ object Server {
             fillPlayListItem(-1, null)
             val dir = File(localPath)
             if (dir.isDirectory) {
-                val notAdded = dir.walk().filter { file ->
+                val notAdded = dir.walk().asSequence().filter { file ->
                     !playList.any { it.url == file.relativeTo(dir).toString() } && !file.isHidden && file.isFile
-                }.map { PlayItem(it.relativeTo(dir).toString()) }.toList()
+                }.take(100).map { PlayItem(it.relativeTo(dir).toString()) }.toList()
                 if (notAdded.isNotEmpty()) {
                     +"Founded in local path:"
                     notAdded.forEach { fillPlayListItem(-1, it) }
