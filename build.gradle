@@ -5,7 +5,7 @@ plugins {
 }
 
 group 'net.xkor.media'
-version '1.0'
+version '1.0-alpha2'
 
 sourceCompatibility = 1.8
 

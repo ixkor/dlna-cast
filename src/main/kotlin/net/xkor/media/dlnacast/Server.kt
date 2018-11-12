@@ -67,6 +67,7 @@ object Server {
     private var host: String = "0.0.0.0"
     private var port: String = "8686"
     private var localPath: String = "static"
+    private var debug = false
 
     fun execute(args: Array<String>) {
         loadConfig()
@@ -77,13 +78,17 @@ object Server {
     }
 
     fun module(application: Application) = application.apply {
+        debug = application.environment.config.propertyOrNull("ktor.deployment.debug")?.getString()?.toBoolean() ?:
+                false
         install(Authentication) {
             basic {
                 realm = "DLNA-Cast"
                 val login = application.environment.config.propertyOrNull("ktor.auth.login")?.getString()
                 val password = application.environment.config.propertyOrNull("ktor.auth.password")?.getString()
                 validate { credentials ->
-                    if (credentials.name == login && credentials.password == password) {
+                    if ((login == null || credentials.name == login) &&
+                        (password == null || credentials.password == password)
+                    ) {
                         UserIdPrincipal(credentials.name)
                     } else {
                         null
@@ -106,6 +111,8 @@ object Server {
                 get("/play-list") { handlePlayList() }
                 get("/play-list-edit") { handlePlayListEdit() }
                 get("/play-list-configure") { handlePlayListConfigure() }
+                get("/actions") { handleActions() }
+                get("/exec-action") { handleExecAction() }
             }
             get("/static/{$pathParameterName...}") { handleStatic() }
         }
@@ -273,6 +280,10 @@ object Server {
         } else {
             a("/start-tracking?udn=" + control.udn) { +"Turn on auto play" }
         }
+        if (control.service != null && debug) {
+            +" | "
+            a("/actions?udn=" + control.udn) { +"See all AVTransport actions" }
+        }
     }
 
     private suspend fun PipelineContext<Unit, ApplicationCall>.handleStartTracking() {
@@ -292,6 +303,74 @@ object Server {
             delay(TimeUnit.SECONDS.toMillis(1)) // wait to unsubscribe complete
         }
         call.respondRedirect("/status")
+    }
+
+    private suspend fun PipelineContext<Unit, ApplicationCall>.handleExecAction() {
+        val udn = call.parameters["udn"] ?: throw IllegalArgumentException("udn can not be null")
+        val name = call.parameters["name"] ?: throw IllegalArgumentException("name can not be null")
+        var exception: ActionInvocationException? = null
+        val invocation = tvs[udn]?.service?.let { service ->
+            val action = service.getAction(name) ?: throw IllegalStateException("no action with name $name")
+            val params = action.inputArguments.orEmpty().map { it.name to call.parameters[it.name] }.toTypedArray()
+            try {
+                upnpService.execute(service, name, *params as Array<Pair<String, Any>>)
+            } catch (error: ActionInvocationException) {
+                exception = error
+                error.invocation
+            }
+        }
+        call.respondHtml {
+            head { title("Execute action $name") }
+            body {
+                +"Execute action $name:"
+                exception?.also {
+                    +" Fail: ${it.message}"
+                } ?: also {
+                    +" Success"
+                }
+                invocation?.outputMap?.forEach { name, value ->
+                    br
+                    +"$name: $value"
+                }
+            }
+        }
+    }
+
+    private suspend fun PipelineContext<Unit, ApplicationCall>.handleActions() {
+        val udn = call.parameters["udn"] ?: throw IllegalArgumentException("udn can not be null")
+        call.respondHtml {
+            head { title("Actions") }
+            body {
+                ul {
+                    tvs[udn]?.service?.actions?.sortedBy { it.name }?.forEach { action ->
+                        li {
+                            form("exec-action") {
+                                target = "_blank"
+                                input(InputType.hidden, name = "udn") { value = udn }
+                                input(InputType.hidden, name = "name") { value = action.name }
+                                +"${action.name} "
+                                button { +"Execute" }
+                                if (!action.outputArguments.isEmpty()) {
+                                    +" (Returns: ${action.outputArguments?.joinToString { it.name }})"
+                                }
+                                br
+                                action.inputArguments?.forEach { argument ->
+                                    label {
+                                        +"\t"
+                                        input(InputType.text, name = argument.name) {
+                                            placeholder = argument.datatype.displayString
+                                        }
+                                        +" (${argument.name})"
+                                    }
+                                    br
+                                }
+                            }
+                            br
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun onDeviceEvent(deviceControl: DeviceControl) {
